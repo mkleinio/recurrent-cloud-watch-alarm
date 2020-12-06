@@ -1,0 +1,20 @@
+{
+  "name": "recurrent-cloud-watch-alarm",
+  "version": "1.0.0",
+  "description": "Turn your single fired CloudWatch alarm in a recurrent event dispatcher",
+  "main": "index.js",
+  "repository": "http://github.com/mkleinio/recurrent-cloud-watch-alarm",
+  "author": "Mauricio Klein",
+  "license": "MIT",
+  "scripts": {
+    "sls": "sls",
+    "deploy-sqs": "sls deploy -c sqs-serverless.yml",
+    "remove-sqs": "sls remove -c sqs-serverless.yml",
+    "deploy-step-functions": "sls deploy -c step-functions-serverless.yml",
+    "remove-step-functions": "sls remove -c step-functions-serverless.yml"
+  },
+  "devDependencies": {
+    "serverless": "^2.15.0",
+    "serverless-step-functions": "^2.29.0"
+  }
+}

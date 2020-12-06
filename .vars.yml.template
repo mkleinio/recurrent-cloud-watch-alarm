@@ -1,0 +1,11 @@
+# The CloudWatch Alarm ARN to watch
+ALARM_ARN:
+
+# The destination SNS topic ARN to send the events
+TOPIC_ARN: "arn:aws:sns:eu-central-1:940943047466:TestTopic"
+
+# The interval between status checks (in seconds)
+INTERVAL:
+
+# The maximum number of retries for the recurrence
+MAX_RETRIES:

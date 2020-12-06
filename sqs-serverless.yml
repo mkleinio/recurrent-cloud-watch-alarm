@@ -1,0 +1,92 @@
+service: recurrent-alarm-sqs
+frameworkVersion: '2'
+
+custom:
+  alarmArn:    ${file(./.vars.yml):ALARM_ARN  }
+  snsTopicArn: ${file(./.vars.yml):TOPIC_ARN  }
+  interval:    ${file(./.vars.yml):INTERVAL   }
+  maxRetries:  ${file(./.vars.yml):MAX_RETRIES}
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: eu-central-1
+
+  iamRoleStatements:
+    # Permission to get the updated alarm status
+    - Effect: Allow
+      Action: cloudwatch:DescribeAlarms
+      Resource: "*"
+
+    # Permission to publish the event in the target SNS topic
+    - Effect: Allow
+      Action: sns:Publish
+      Resource: ${self:custom.snsTopicArn}
+
+    # Permission to interact with the SQS queue
+    - Effect: Allow
+      Action:
+        - sqs:SendMessage
+        - sqs:ReceiveMessage
+        - sqs:DeleteMessage
+        - sqs:ChangeMessageVisibility
+      Resource: !GetAtt Queue.Arn
+
+functions:
+  consumer:
+    handler: ./lambda/sqs/consumer.handler
+    environment:
+      SNS_TOPIC_ARN: ${self:custom.snsTopicArn}
+      QUEUE_URL: !Ref Queue
+      INTERVAL: ${self:custom.interval}
+      MAX_RETRIES: ${self:custom.maxRetries}
+    events:
+      - sqs:
+          arn: !GetAtt Queue.Arn
+
+resources:
+  Resources:
+    # Create the input queue
+    Queue:
+      Type: AWS::SQS::Queue
+      Properties:
+        MessageRetentionPeriod: 1209600 # 14 days
+
+    # Add permissions to EventBridge to publish alarm events
+    # in the queue
+    QueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref Queue
+        PolicyDocument:
+          Statement:
+            - Action:
+                - sqs:SendMessage
+              Effect: Allow
+              Resource: !GetAtt Queue.Arn
+              Principal:
+                Service: events.amazonaws.com
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !GetAtt CWEvent.Arn
+
+    # The EventBridge rule for the alarm
+    CWEvent:
+      Type: AWS::Events::Rule
+      Properties:
+        EventPattern:
+          source:
+            - aws.cloudwatch
+          detail-type:
+            - CloudWatch Alarm State Change
+          resources:
+            - ${self:custom.alarmArn}
+          detail:
+            state:
+              value:
+                - ALARM
+        Targets:
+          - Arn: !GetAtt Queue.Arn
+            Id: "QueueTarget"

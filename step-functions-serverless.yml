@@ -1,0 +1,101 @@
+service: recurrent-alarm-step-functions
+frameworkVersion: '2'
+
+custom:
+  alarmArn:    ${file(./.vars.yml):ALARM_ARN  }
+  snsTopicArn: ${file(./.vars.yml):TOPIC_ARN  }
+  interval:    ${file(./.vars.yml):INTERVAL   }
+  maxRetries:  ${file(./.vars.yml):MAX_RETRIES}
+
+plugins:
+  - serverless-step-functions
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: eu-central-1
+
+  iamRoleStatements:
+    # Permission to get the updated alarm status
+    - Effect: Allow
+      Action: cloudwatch:DescribeAlarms
+      Resource: "*"
+
+    # Permission to publish the event in the target SNS topic
+    - Effect: Allow
+      Action: sns:Publish
+      Resource: ${self:custom.snsTopicArn}
+
+functions:
+  sendEvent:
+    handler: ./lambda/step-functions/send-event.handler
+    environment:
+      SNS_TOPIC_ARN: ${self:custom.snsTopicArn}
+
+  checkAlarmStatus:
+    handler: ./lambda/step-functions/check-alarm-status.handler
+
+stepFunctions:
+  stateMachines:
+    recurrentStepFunc:
+      events:
+        - eventBridge:
+            event:
+              source:
+                - aws.cloudwatch
+              detail-type:
+                - CloudWatch Alarm State Change
+              resources:
+                - ${self:custom.alarmArn}
+              detail:
+                state:
+                  value:
+                    - ALARM
+      definition:
+        StartAt: "Prepare Data"
+        States:
+          "Prepare Data":
+            Type: "Pass"
+            ResultPath: "$.data.cloudWatchAlarm"
+            OutputPath: "$.data"
+            Next: "Send event to SNS"
+          "Send event to SNS":
+            Type: "Task"
+            ResultPath: "$.sendEventResult"
+            Resource: !GetAtt sendEvent.Arn
+            Next: "Wait until next recurrence"
+          "No, keep going":
+            Type: "Pass"
+            Next: "Send event to SNS"
+          "Wait until next recurrence":
+            Type: "Wait"
+            Seconds: ${self:custom.interval}
+            Next: "Check Alarm Status"
+          "Check Alarm Status":
+            Type: "Task"
+            ResultPath: "$.checkAlarmResult"
+            Resource: !GetAtt checkAlarmStatus.Arn
+            Next: "Alarm still on?"
+          "Alarm still on?":
+            Type: "Choice"
+            Choices:
+              - Not:
+                  Variable: "$.checkAlarmResult.alarmStatus"
+                  StringEquals: "ALARM"
+                Next: "No, alarm is off"
+            Default: "Yes, alarm still on"
+          "Yes, alarm still on":
+            Type: "Pass"
+            Next: "Max retries reached?"
+          "Max retries reached?":
+            Type: "Choice"
+            Choices:
+              - Variable: "$.sendEventResult.retries"
+                NumericGreaterThanEquals: ${self:custom.maxRetries}
+                Next: "Yes, stop the machine"
+            Default: "No, keep going"
+          "Yes, stop the machine":
+            Type: "Succeed"
+          "No, alarm is off":
+            Type: "Succeed"
